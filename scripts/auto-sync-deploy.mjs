@@ -112,15 +112,29 @@ async function main() {
   run(['fetch', 'upstream', 'main'])
   const local = run(['rev-parse', 'HEAD']).trim()
   const remote = run(['rev-parse', 'upstream/main']).trim()
-  if (local === remote) {
-    log('已是最新，无需更新。')
+  // 用祖先关系判断，而非字符串相等：fork 自带 workflow 等提交，
+  // HEAD 永远不等于 upstream/main，用 != 判断会导致每次都误判为有更新。
+  let upstreamIsAncestor = true
+  try {
+    run(['merge-base', '--is-ancestor', remote, 'HEAD'])
+  } catch {
+    upstreamIsAncestor = false
+  }
+  if (upstreamIsAncestor) {
+    log('上游无新提交（upstream 已是 HEAD 的祖先），无需更新。')
     getResultLine('NO_UPDATES')
     return
   }
-  log(`发现更新: ${local.slice(0, 8)} -> ${remote.slice(0, 8)}`)
+  log(`发现上游新提交: ${local.slice(0, 8)} -> ${remote.slice(0, 8)}`)
 
   // 3. 合并 + 构建
-  run(['merge', '--ff-only', 'upstream/main'])
+  // fork 可能自带 workflow 等额外提交，无法 fast-forward，用 --no-edit 合并；
+  // 若上游是 HEAD 祖先（理论已在上面跳过）才走 ff-only。
+  try {
+    run(['merge', '--ff-only', 'upstream/main'])
+  } catch {
+    run(['merge', '--no-edit', '-m', 'chore: merge upstream updates', 'upstream/main'])
+  }
   log('安装依赖并构建...')
   execFileSync('npm', ['ci'], { stdio: 'inherit' })
   execFileSync('npm', ['run', 'build'], { stdio: 'inherit' })

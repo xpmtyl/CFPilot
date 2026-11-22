@@ -40,12 +40,16 @@ jobs:
           REMOTE=$(git rev-parse upstream/main)
           echo "local=$LOCAL" >> $GITHUB_OUTPUT
           echo "remote=$REMOTE" >> $GITHUB_OUTPUT
-          if [ "$LOCAL" = "$REMOTE" ]; then
+          # 关键：用「祖先关系」判断，而非字符串相等。
+          # fork 会自带 workflow 等提交，HEAD 永远不等于 upstream/main，
+          # 若用 != 判断会导致每季度都误判为有更新并重复部署。
+          # 若 upstream/main 已是 HEAD 的祖先 => 源没有新提交 => 跳过。
+          if git merge-base --is-ancestor "$REMOTE" HEAD; then
             echo "has_update=false" >> $GITHUB_OUTPUT
-            echo "✅ 已是最新（$LOCAL），无需更新"
+            echo "✅ 上游无新提交（upstream 已是 HEAD 的祖先），无需更新"
           else
             echo "has_update=true" >> $GITHUB_OUTPUT
-            echo "🆕 发现更新：$LOCAL -> $REMOTE"
+            echo "🆕 发现上游新提交：$LOCAL -> $REMOTE"
           fi
 
       - name: 设置 Node.js
