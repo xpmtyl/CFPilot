@@ -1,0 +1,68 @@
+name: 季度自动同步与部署 (CFPilot)
+
+# 每季度检测上游 xmwengxing/CFPilot 是否有更新：
+#   cron: 1/4/7/10 月 1 号 00:00 UTC（北京时间 08:00）运行
+#   也可在 Actions 页面手动触发（workflow_dispatch）
+# 有更新则：同步 fork -> 重新构建 -> 提交产物 -> 部署到 Cloudflare Pages + Worker
+on:
+  schedule:
+    - cron: '0 0 1 1,4,7,10 *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: auto-sync-deploy
+  cancel-in-progress: false
+
+jobs:
+  sync-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: 检出仓库（含完整历史）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 配置上游 remote
+        run: |
+          git remote remove upstream 2>/dev/null || true
+          git remote add upstream https://github.com/xmwengxing/CFPilot.git
+          git fetch upstream main
+
+      - name: 检测上游是否有更新
+        id: check
+        run: |
+          LOCAL=$(git rev-parse HEAD)
+          REMOTE=$(git rev-parse upstream/main)
+          echo "local=$LOCAL" >> $GITHUB_OUTPUT
+          echo "remote=$REMOTE" >> $GITHUB_OUTPUT
+          if [ "$LOCAL" = "$REMOTE" ]; then
+            echo "has_update=false" >> $GITHUB_OUTPUT
+            echo "✅ 已是最新（$LOCAL），无需更新"
+          else
+            echo "has_update=true" >> $GITHUB_OUTPUT
+            echo "🆕 发现更新：$LOCAL -> $REMOTE"
+          fi
+
+      - name: 设置 Node.js
+        if: steps.check.outputs.has_update == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 同步 + 构建 + 提交 + 部署
+        if: steps.check.outputs.has_update == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CF_TOKEN: ${{ secrets.CF_TOKEN }}
+          CF_ACCT: ${{ secrets.CF_ACCOUNT_ID }}
+        run: node scripts/auto-sync-deploy.mjs
+
+      - name: 汇总
+        if: always()
+        run: echo "季度检测完成（has_update=${{ steps.check.outputs.has_update }}）"
