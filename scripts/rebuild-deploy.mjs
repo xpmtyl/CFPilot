@@ -1,15 +1,18 @@
 #!/usr/bin/env node
 /**
- * CFPilot 完整实例重建 + 部署脚本（供 GitHub Actions workflow_dispatch 调用）
+ * CFPilot 单实例重建 + 部署脚本（供 GitHub Actions workflow_dispatch 调用）
  *
- * 重建两组实例（控制面+数据面），内核首次启动会用环境变量自动初始化 KV：
- *   实例B(主): hfs6bzpkx6(控制) + ivb1ad8aa6(数据)
- *   实例A(新): ldp7eov5(控制)   + xyuk4s93(数据)
+ * 单实例设计（与知识库 README 一致：同账号只跑一个实例，避免多实例维护成本）：
+ *   控制面 hfs6bzpkx6 + 数据面 ivb1ad8aa6，共享一个 KV
  *
  * 全部敏感值从 GitHub Secrets 注入（仓库为 public，禁止明文写入）：
  *   CF_TOKEN, CF_ACCOUNT_ID
- *   CFP_PW_B, CFP_UUID_B, CFP_TROJAN_B  — 实例B 面板密码/UUID/Trojan密码
- *   CFP_PW_A, CFP_UUID_A, CFP_TROJAN_A  — 实例A（可为空，由内核随机生成）
+ *   CFP_PW_B, CFP_UUID_B, CFP_TROJAN_B  — 面板密码/UUID/Trojan密码
+ *
+ * 配置要点（踩坑记录）：
+ *   - 环境变量/KV 必须用 PATCH /pages/projects/{name} + deployment_configs.production，
+ *     且必须在部署前配好；/environments/production/vars 端点不生效
+ *   - CONFIG 必须写进 KV（优先级 KV > 环境变量），否则订阅令牌无效
  */
 import { readFileSync } from 'node:fs'
 
@@ -22,7 +25,7 @@ if (!CF_TOKEN || !CF_ACCT) {
   console.error('缺少 CF_TOKEN / CF_ACCOUNT_ID'); process.exit(1)
 }
 
-// 非敏感的固定配置（路径沿用原实例；密码/UUID 从 Secret 读）
+// 单实例固定配置（路径沿用原实例；密码/UUID 从 Secret 读）
 const INSTANCES = [
   {
     key: 'B',
@@ -35,18 +38,6 @@ const INSTANCES = [
     uuid: process.env.CFP_UUID_B || '',
     trojanPassword: process.env.CFP_TROJAN_B || '',
     customDomain: 'cfp.xpyxm.eu.cc',
-  },
-  {
-    key: 'A',
-    control: 'ldp7eov5',
-    data: 'xyuk4s93',
-    panelPath: '/gzuzg64sdbi3',
-    wsPath: '/ecaefgzhti',
-    kvTitle: 'cfpilot-kv-rebuilt-6590vulx',
-    panelPassword: process.env.CFP_PW_A || '',
-    uuid: process.env.CFP_UUID_A || '',
-    trojanPassword: process.env.CFP_TROJAN_A || '',
-    customDomain: '',
   },
 ]
 

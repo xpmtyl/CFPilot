@@ -1,6 +1,7 @@
 name: 重建并部署 CFPilot 到 Cloudflare
 
-# 手动触发：完整重建两组 CFPilot 实例（2 个 KV + 4 个 Pages）并部署最新代码
+# 手动触发：重建单实例 CFPilot（1 个 KV + 控制面/数据面 2 个 Pages）并部署最新代码
+# 知识库建议同账号只跑一个实例，避免多实例维护成本
 # 敏感配置全部来自 GitHub Secrets
 on:
   workflow_dispatch:
@@ -38,7 +39,4 @@ jobs:
           CFP_PW_B: ${{ secrets.CFP_PW_B }}
           CFP_UUID_B: ${{ secrets.CFP_UUID_B }}
           CFP_TROJAN_B: ${{ secrets.CFP_TROJAN_B }}
-          CFP_PW_A: ${{ secrets.CFP_PW_A }}
-          CFP_UUID_A: ${{ secrets.CFP_UUID_A }}
-          CFP_TROJAN_A: ${{ secrets.CFP_TROJAN_A }}
         run: node scripts/rebuild-deploy.mjs

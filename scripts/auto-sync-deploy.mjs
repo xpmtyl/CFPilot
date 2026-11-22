@@ -58,10 +58,9 @@ async function deployToCloudflare() {
   const control = readFileSync(`${ROOT}/packages/worker-core/dist/control.js`, 'utf8')
   const dataplane = readFileSync(`${ROOT}/packages/worker-core/dist/dataplane.js`, 'utf8')
 
-  // Pages: 控制面 <- control.js，数据面 <- dataplane.js
+  // 单实例（知识库建议同账号只跑一个）：控制面 <- control.js，数据面 <- dataplane.js
+  // 实例A（ldp7eov5/xyuk4s93）已收敛删除，不再部署
   const pagesTargets = [
-    { name: 'ldp7eov5', code: control },
-    { name: 'xyuk4s93', code: dataplane },
     { name: 'hfs6bzpkx6', code: control },
     { name: 'ivb1ad8aa6', code: dataplane },
   ]
