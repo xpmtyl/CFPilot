@@ -90,11 +90,29 @@ async function findOrCreatePages(name) {
 }
 
 async function setPagesVars(name, envVars, kvIds) {
-  await cf(`/accounts/${CF_ACCT}/pages/projects/${name}/environments/production/vars`, {
+  // ⚠️ 必须用 PATCH /pages/projects/{name} 并把配置放进 deployment_configs.production。
+  // 用 /environments/production/vars 端点不会生效（实测：返回成功但变量为空）。
+  // 且变量/KV 必须在部署之前配好，否则对本次部署不生效。
+  const result = await cf(`/accounts/${CF_ACCT}/pages/projects/${name}`, {
     method: 'PATCH',
-    body: { env_vars: envVars, kv_namespaces: kvIds },
+    body: { deployment_configs: { production: { kv_namespaces: kvIds, env_vars: envVars } } },
   })
-  console.log(`  Pages ${name} 变量/KV绑定 已配置`)
+  // 回读校验：避免脚本误报"已配置"
+  const dc = (result?.deployment_configs || {}).production || {}
+  const gotEnv = Object.keys(dc.env_vars || {})
+  const gotKv = Object.keys(dc.kv_namespaces || {})
+  if (!gotEnv.length || !gotKv.length) {
+    throw new Error(`${name} 变量/KV 配置未生效（env=[${gotEnv}] kv=[${gotKv}]）`)
+  }
+  console.log(`  Pages ${name} 变量/KV绑定 已配置并回读确认: env=[${gotEnv}] kv=[${gotKv}]`)
+}
+
+/** 把 CONFIG 写进 KV：内核优先级 KV(CONFIG) > 环境变量 > 默认值，
+ *  只配环境变量而不写 CONFIG 会导致 UUID/密码读不到、订阅失效。 */
+async function writeKVConfig(kvId, cfg) {
+  const url = `/accounts/${CF_ACCT}/storage/kv/namespaces/${kvId}/values/CONFIG`
+  await cf(url, { method: 'PUT', body: JSON.stringify(cfg), raw: true })
+  console.log('  KV CONFIG 已写入')
 }
 
 async function deployPages(name, code) {
@@ -139,21 +157,29 @@ async function main() {
 
     const kvBinding = { K: { namespace_id: kvId }, KV: { namespace_id: kvId } }
     const controlVars = {
-      DATA_HOST: { type: 'plain_text', value: `${inst.data}.pages.dev` },
-      PANEL_PATH: { type: 'plain_text', value: inst.panelPath },
+      DATA_HOST: { value: `${inst.data}.pages.dev` },
+      PANEL_PATH: { value: inst.panelPath },
     }
-    if (inst.panelPassword) controlVars.PANEL_PASSWORD = { type: 'secret_text', value: inst.panelPassword }
+    if (inst.panelPassword) controlVars.PANEL_PASSWORD = { value: inst.panelPassword }
     await setPagesVars(inst.control, controlVars, kvBinding)
 
     const dataVars = {
-      ENABLE_TROJAN: { type: 'plain_text', value: 'true' },
-      ENABLE_XHTTP: { type: 'plain_text', value: 'true' },
-      WS_PATH: { type: 'plain_text', value: inst.wsPath },
-      PATH: { type: 'plain_text', value: inst.wsPath },
-      RESOLVE_PREFERRED: { type: 'plain_text', value: 'true' },
+      ENABLE_TROJAN: { value: 'true' },
+      ENABLE_XHTTP: { value: 'true' },
+      WS_PATH: { value: inst.wsPath },
+      PATH: { value: inst.wsPath },
+      RESOLVE_PREFERRED: { value: 'true' },
     }
-    if (inst.uuid) dataVars.UUID = { type: 'plain_text', value: inst.uuid }
-    if (inst.trojanPassword) dataVars.TROJAN_PASSWORD = { type: 'plain_text', value: inst.trojanPassword }
+    // 写 CONFIG 到 KV（内核以此为准）；即使 UUID/密码为空也写，让内核按持久化路径引导
+    await writeKVConfig(kvId, {
+      uuid: inst.uuid || '',
+      trojanPassword: inst.trojanPassword || '',
+      wsPath: inst.wsPath,
+      enableTrojan: true,
+      enableXhttp: true,
+    })
+    if (inst.uuid) dataVars.UUID = { value: inst.uuid }
+    if (inst.trojanPassword) dataVars.TROJAN_PASSWORD = { value: inst.trojanPassword }
     await setPagesVars(inst.data, dataVars, kvBinding)
 
     await deployPages(inst.control, control)
