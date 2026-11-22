@@ -1,0 +1,44 @@
+name: 重建并部署 CFPilot 到 Cloudflare
+
+# 手动触发：完整重建两组 CFPilot 实例（2 个 KV + 4 个 Pages）并部署最新代码
+# 敏感配置全部来自 GitHub Secrets
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rebuild-deploy
+  cancel-in-progress: false
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 安装依赖并构建
+        run: |
+          npm ci
+          npm run build -w @cfpilot/worker-core
+
+      - name: 重建并部署到 Cloudflare
+        env:
+          CF_TOKEN: ${{ secrets.CF_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CFP_PW_B: ${{ secrets.CFP_PW_B }}
+          CFP_UUID_B: ${{ secrets.CFP_UUID_B }}
+          CFP_TROJAN_B: ${{ secrets.CFP_TROJAN_B }}
+          CFP_PW_A: ${{ secrets.CFP_PW_A }}
+          CFP_UUID_A: ${{ secrets.CFP_UUID_A }}
+          CFP_TROJAN_A: ${{ secrets.CFP_TROJAN_A }}
+        run: node scripts/rebuild-deploy.mjs
