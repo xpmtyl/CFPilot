@@ -35,9 +35,12 @@ function getResultLine(result) {
 async function cf(path, opts = {}) {
   const headers = { Authorization: `Bearer ${CF_TOKEN}` }
   const init = { method: opts.method || 'GET', headers }
-  if (opts.body) {
+  if (opts.body !== undefined) {
     if (opts.body instanceof FormData) {
       init.body = opts.body
+    } else if (opts.raw) {
+      headers['Content-Type'] = 'text/plain'
+      init.body = String(opts.body)
     } else {
       headers['Content-Type'] = 'application/json'
       init.body = JSON.stringify(opts.body)
@@ -86,6 +89,29 @@ async function deployToCloudflare() {
       if (Date.now() > deadline) throw new Error(`Pages ${t.name} 部署超时`)
       await new Promise((r) => setTimeout(r, 4000))
     }
+  }
+
+  // 更新 B 实例 KV 里 manifest 的 build 为官方通道值，避免面板 /kernel-check
+  // 因 build 与通道不一致误报「有新内核」。Kv ID 从现有 manifest 读，避免硬编码。
+  try {
+    const kvNs = '5a9be735eb4b4bb5abb4d7435c6456bb'
+    const mUrl = `/accounts/${CF_ACCT}/storage/kv/namespaces/${kvNs}/values/CFP_DEPLOY_MANIFEST`
+    let manifest = {}
+    try { manifest = JSON.parse(await cf(mUrl)) } catch { /* 清单不存在则跳过 */ }
+    if (manifest && Object.keys(manifest).length) {
+      const chRes = await fetch('https://github.com/xmwengxing/CFPilot/releases/download/kernel-latest/cfpilot-kernel-VERSION', { signal: AbortSignal.timeout(8000) })
+      if (chRes.ok) {
+        const ch = await chRes.json()
+        if (ch.build) {
+          manifest.build = ch.build
+          manifest.at = new Date().toISOString()
+          await cf(mUrl, { method: 'PUT', body: JSON.stringify(manifest), raw: true })
+          log(`  manifest build 已更新为官方通道 ${ch.build}`)
+        }
+      }
+    }
+  } catch (e) {
+    log(`  manifest 更新跳过: ${e.message}`)
   }
 
   // cfe Worker: 读取现有绑定并沿用，仅替换代码

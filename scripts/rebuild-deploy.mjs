@@ -106,6 +106,46 @@ async function writeKVConfig(kvId, cfg) {
   console.log('  KV CONFIG 已写入')
 }
 
+/** 把 CFP_DEPLOY_MANIFEST 写进 KV：面板 /kernel-check 用它的 build 与
+ *  官方 kernel-latest 通道比对，缺失会导致误报「有新内核」。
+ *  build 动态取官方通道的值，保证重建后面板判定为「内核已最新」。 */
+async function writeKVDeploymentManifest(kvId, inst) {
+  const channelUrl = 'https://github.com/xmwengxing/CFPilot/releases/download/kernel-latest/cfpilot-kernel-VERSION'
+  let build = '', seq = 0
+  try {
+    const res = await fetch(channelUrl, { signal: AbortSignal.timeout(8000) })
+    if (res.ok) {
+      const m = await res.json()
+      build = m.build || ''; seq = m.seq || 0
+    }
+  } catch (e) {
+    console.log(`  读取官方通道失败（${e.message}），manifest 用缺省 build`)
+  }
+  const manifest = {
+    v: 1,
+    kvNamespaceId: kvId,
+    controlProject: inst.control,
+    dataProject: inst.data,
+    controlSubdomain: `${inst.control}.pages.dev`,
+    dataSubdomain: `${inst.data}.pages.dev`,
+    dataCustomDomain: inst.customDomain || '',
+    dataPlaneMode: 'pages',
+    build: build || 'unknown',
+    kernelVersion: '0.60.0-beta.1',
+    at: new Date().toISOString(),
+    credentials: {
+      panelPath: inst.panelPath,
+      panelPassword: inst.panelPassword || '',
+      uuid: inst.uuid || '',
+      trojanPassword: inst.trojanPassword || '',
+      wsPath: inst.wsPath,
+    },
+  }
+  const url = `/accounts/${CF_ACCT}/storage/kv/namespaces/${kvId}/values/CFP_DEPLOY_MANIFEST`
+  await cf(url, { method: 'PUT', body: JSON.stringify(manifest), raw: true })
+  console.log(`  KV CFP_DEPLOY_MANIFEST 已写入（build=${build || 'unknown'}, seq=${seq}）`)
+}
+
 async function deployPages(name, code) {
   const bundle = new FormData()
   bundle.set('metadata', new Blob([JSON.stringify({ main_module: '_worker.js', bindings: {} })], { type: 'application/json' }), 'metadata.json')
@@ -169,6 +209,8 @@ async function main() {
       enableTrojan: true,
       enableXhttp: true,
     })
+    // 写部署清单，避免面板 /kernel-check 因 build 缺失误报「有新内核」
+    await writeKVDeploymentManifest(kvId, inst)
     if (inst.uuid) dataVars.UUID = { value: inst.uuid }
     if (inst.trojanPassword) dataVars.TROJAN_PASSWORD = { value: inst.trojanPassword }
     await setPagesVars(inst.data, dataVars, kvBinding)
